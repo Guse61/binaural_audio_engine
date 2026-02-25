@@ -165,7 +165,8 @@ class BinauralAudioEngine(private val context: Context) {
     private var padFilterPhase = 0.0
     private var padNoiseState = 0.0
     private var padFilterCutoff = 800.0 // Hz
-    
+    private var padFilterBaseCutoff = 800.0 // Base cutoff set by emotional mode
+
     // Anti-fatigue optimization
     private var antiHarshness = true // Upper harmonic roll-off
     private var dcOffsetFilter = 0.0 // DC blocking filter state
@@ -181,6 +182,7 @@ class BinauralAudioEngine(private val context: Context) {
     private val voicePhases = DoubleArray(VOICE_COUNT) { 0.0 }
     private val voiceFrequencies = DoubleArray(VOICE_COUNT) { 0.0 }
     private val voiceAmplitudes = DoubleArray(VOICE_COUNT) { 0.0 }
+    private val baseVoiceAmplitudes = DoubleArray(VOICE_COUNT) { 0.0 }
     private val voiceStereoPositions = DoubleArray(VOICE_COUNT) { 0.0 }
     private val voiceLFOPhases = DoubleArray(VOICE_COUNT) { 0.0 }
     private val voiceLFOFreqs = DoubleArray(VOICE_COUNT) { 0.0 }
@@ -281,46 +283,52 @@ class BinauralAudioEngine(private val context: Context) {
      */
     private fun initializeHarmonicVoices() {
         updateRootFrequency()
-        
+
         // Voice 0: Binaural Carrier (Core Layer)
         voiceAmplitudes[0] = 0.35
-        voiceStereoPositions[0] = 0.0 // Center
+        baseVoiceAmplitudes[0] = 0.35
+        voiceStereoPositions[0] = 0.0
         voiceLFOFreqs[0] = 0.005
-        
+
         // Voice 1: Perfect Fifth Layer (3:2 ratio)
         voiceAmplitudes[1] = 0.12
-        voiceStereoPositions[1] = 0.3 // Slight right
+        baseVoiceAmplitudes[1] = 0.12
+        voiceStereoPositions[1] = 0.3
         voiceLFOFreqs[1] = 0.004
-        
+
         // Voice 2: Octave Air Layer (2x frequency)
         voiceAmplitudes[2] = 0.08
-        voiceStereoPositions[2] = -0.25 // Slight left
+        baseVoiceAmplitudes[2] = 0.08
+        voiceStereoPositions[2] = -0.25
         voiceLFOFreqs[2] = 0.006
-        
+
         // Voice 3: Subharmonic Support (0.5x frequency)
         voiceAmplitudes[3] = 0.10
-        voiceStereoPositions[3] = 0.0 // Center
+        baseVoiceAmplitudes[3] = 0.10
+        voiceStereoPositions[3] = 0.0
         voiceLFOFreqs[3] = 0.003
-        
+
         // Voice 4: Evolving Pad Texture
         voiceAmplitudes[4] = 0.15
-        voiceStereoPositions[4] = -0.4 // Left
+        baseVoiceAmplitudes[4] = 0.15
+        voiceStereoPositions[4] = -0.4
         voiceLFOFreqs[4] = 0.007
-        
+
         // Voice 5: Additional harmonic layer
         voiceAmplitudes[5] = 0.10
-        voiceStereoPositions[5] = 0.35 // Right
+        baseVoiceAmplitudes[5] = 0.10
+        voiceStereoPositions[5] = 0.35
         voiceLFOFreqs[5] = 0.008
-        
+
         // Initialize random phase offsets to avoid phase alignment
         for (i in 0 until VOICE_COUNT) {
             voicePhases[i] = Random.nextDouble() * TWO_PI
             voiceDetuneOffsets[i] = (Random.nextDouble() - 0.5) * MICRO_DETUNE_CENTS
             voiceEnvelopeStates[i] = 1.0
         }
-        
+
         updateVoiceFrequencies()
-        
+
         Log.i(TAG, "Initialized $VOICE_COUNT harmonic voices with root note ${String.format("%.2f", rootNote)} Hz")
     }
     
@@ -597,9 +605,9 @@ class BinauralAudioEngine(private val context: Context) {
      */
     fun setHarmonicDensity(density: Double) {
         harmonicDensity = density.coerceIn(0.0, 1.0)
-        // Adjust voice amplitudes based on density
+        // Adjust voice amplitudes based on density (calculate from base, don't multiply current)
         for (i in 1 until VOICE_COUNT) {
-            voiceAmplitudes[i] = voiceAmplitudes[i] * (0.5 + 0.5 * harmonicDensity)
+            voiceAmplitudes[i] = baseVoiceAmplitudes[i] * (0.5 + 0.5 * harmonicDensity)
         }
         Log.d(TAG, "Harmonic density set to: ${harmonicDensity * 100}%")
     }
@@ -673,7 +681,7 @@ class BinauralAudioEngine(private val context: Context) {
                 nextChordChangeTime = CHORD_CHANGE_MAX
                 evolutionSpeed = 0.3
                 // Darker filter curve
-                padFilterCutoff = 600.0
+                padFilterBaseCutoff = 600.0
                 // Reduced upper harmonics
                 harmonicRichness = 0.3
                 antiHarshness = true
@@ -685,7 +693,7 @@ class BinauralAudioEngine(private val context: Context) {
                 nextChordChangeTime = (CHORD_CHANGE_MIN + CHORD_CHANGE_MAX) / 2.0
                 evolutionSpeed = 0.5
                 // Warm pad density
-                padFilterCutoff = 800.0
+                padFilterBaseCutoff = 800.0
                 harmonicRichness = 0.5
             }
             EmotionalMode.FOCUS -> {
@@ -697,7 +705,7 @@ class BinauralAudioEngine(private val context: Context) {
                 // Reduced harmonic complexity
                 harmonicDensity = 0.5
                 harmonicRichness = 0.4
-                padFilterCutoff = 1000.0
+                padFilterBaseCutoff = 1000.0
             }
         }
         updateRootFrequency()
@@ -796,18 +804,18 @@ class BinauralAudioEngine(private val context: Context) {
         // Generate band-limited noise
         val white = (Random.nextDouble() * 2.0 - 1.0) * 0.3
         padNoiseState = (padNoiseState + white).coerceIn(-1.0, 1.0)
-        
+
         // Apply slow evolving filter movement
         padFilterPhase += TWO_PI * 0.02 * deltaTime // Very slow evolution
         if (padFilterPhase >= TWO_PI) padFilterPhase -= TWO_PI
-        
-        // Modulate filter cutoff slowly (400-1200 Hz range)
-        padFilterCutoff = 800.0 + sin(padFilterPhase) * 400.0
-        
+
+        // Modulate filter cutoff slowly around base cutoff (±200 Hz range)
+        padFilterCutoff = padFilterBaseCutoff + sin(padFilterPhase) * 200.0
+
         // Simple low-pass filter
         val filterCoeff = 1.0 - exp(-TWO_PI * padFilterCutoff / SAMPLE_RATE)
         val filtered = padNoiseState * filterCoeff
-        
+
         return filtered * 0.5 // Keep extremely low amplitude
     }
     
@@ -1050,7 +1058,8 @@ class BinauralAudioEngine(private val context: Context) {
         val buffer = ShortArray(bufferSize * 2) // Stereo
         val deltaTime = bufferSize.toDouble() / SAMPLE_RATE
         
-        var lastCpuMeasureTime = System.nanoTime()
+        // CPU measurement: compare processing time to theoretical buffer duration
+        val bufferDurationNanos = (bufferSize.toDouble() / SAMPLE_RATE * 1_000_000_000).toLong()
         var processingTimeAccumulator = 0L
         var bufferCount = 0
 
@@ -1102,26 +1111,26 @@ class BinauralAudioEngine(private val context: Context) {
                 buffer[i * 2] = (leftSample * 32767.0).coerceIn(-32768.0, 32767.0).toInt().toShort()
                 buffer[i * 2 + 1] = (rightSample * 32767.0).coerceIn(-32768.0, 32767.0).toInt().toShort()
             }
-
-            // Write to AudioTrack
-            audioTrack?.write(buffer, 0, buffer.size)
             
-            // Measure CPU usage
+            // Measure processing time (before write, which blocks)
             val bufferEndTime = System.nanoTime()
             val processingTime = bufferEndTime - bufferStartTime
             processingTimeAccumulator += processingTime
             bufferCount++
+
+            // Write to AudioTrack (this blocks until buffer space available)
+            audioTrack?.write(buffer, 0, buffer.size)
             
             // Update CPU usage every 10 buffers (~0.23 seconds at 1024 buffer size)
             if (bufferCount >= 10) {
-                val elapsedTime = bufferEndTime - lastCpuMeasureTime
-                val cpuRatio = processingTimeAccumulator.toDouble() / elapsedTime.toDouble()
+                // Calculate CPU as: (time spent processing) / (theoretical time for audio playback)
+                val totalBufferDuration = bufferDurationNanos * bufferCount
+                val cpuRatio = processingTimeAccumulator.toDouble() / totalBufferDuration.toDouble()
                 cpuUsagePercent = (cpuRatio * 100.0).coerceIn(0.0, 100.0)
                 
                 // Reset accumulators
                 processingTimeAccumulator = 0L
                 bufferCount = 0
-                lastCpuMeasureTime = bufferEndTime
             }
         }
     }
