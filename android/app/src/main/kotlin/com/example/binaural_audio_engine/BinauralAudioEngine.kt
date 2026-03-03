@@ -247,8 +247,10 @@ class BinauralAudioEngine(private val context: Context) {
 
     // ── Anti-fatigue / DC block ───────────────────────────────
     private var antiHarshness = true
-    private var dcOffsetFilterL = 0.0
-    private var dcOffsetFilterR = 0.0
+    private var prevInputL = 0.0
+    private var prevOutputL = 0.0
+    private var prevInputR = 0.0
+    private var prevOutputR = 0.0
 
     // ── Pad filter state (kept for emotional mode API) ────────
     private var padFilterBaseCutoff = 800.0
@@ -392,13 +394,15 @@ class BinauralAudioEngine(private val context: Context) {
             isRunning = true
             Log.i(TAG, "start(): isRunning=true")
 
-            // 2. Start the audio thread — generateAudioLoop() will see isRunning=true immediately
+            // 2. Call play() BEFORE starting the thread — AudioTrack must be in PLAYING state
+            //    before the first write() in MODE_STREAM, otherwise write() may block indefinitely
+            audioTrack?.play()
+            Log.i(TAG, "start(): AudioTrack.play() called BEFORE thread start")
+
+            // 3. Start the audio thread — generateAudioLoop() will see isRunning=true and
+            //    AudioTrack already in PLAYING state, so write() will not block
             startAudioThread()
             Log.i(TAG, "start(): audio thread started")
-
-            // 3. Call play() so AudioTrack is ready to consume written data
-            audioTrack?.play()
-            Log.i(TAG, "start(): AudioTrack.play() called")
 
             Log.i(TAG, "Audio engine started — isRunning=true, envelope=ATTACK")
             true
@@ -790,30 +794,40 @@ class BinauralAudioEngine(private val context: Context) {
     // ============================================================
 
     private fun applyAntiFatigueL(sample: Double): Double {
-        var s = sample
-        val dc = dcOffsetFilterL
-        dcOffsetFilterL = 0.995 * (dc + s - s)  // DC block
-        s -= dcOffsetFilterL
+        val R = 0.995
+        val output = sample - prevInputL + R * prevOutputL
+        prevInputL = sample
+        prevOutputL = output
+
+        var s = output
+
         if (abs(s) > SOFT_CLIP_THRESHOLD) {
             val sign = if (s > 0) 1.0 else -1.0
             val excess = abs(s) - SOFT_CLIP_THRESHOLD
             s = sign * (SOFT_CLIP_THRESHOLD + tanh(excess * 3.0) * (1.0 - SOFT_CLIP_THRESHOLD))
         }
+
         if (antiHarshness) s *= 0.98
+
         return s.coerceIn(-1.0, 1.0)
     }
 
     private fun applyAntiFatigueR(sample: Double): Double {
-        var s = sample
-        val dc = dcOffsetFilterR
-        dcOffsetFilterR = 0.995 * (dc + s - s)
-        s -= dcOffsetFilterR
+        val R = 0.995
+        val output = sample - prevInputR + R * prevOutputR
+        prevInputR = sample
+        prevOutputR = output
+
+        var s = output
+
         if (abs(s) > SOFT_CLIP_THRESHOLD) {
             val sign = if (s > 0) 1.0 else -1.0
             val excess = abs(s) - SOFT_CLIP_THRESHOLD
             s = sign * (SOFT_CLIP_THRESHOLD + tanh(excess * 3.0) * (1.0 - SOFT_CLIP_THRESHOLD))
         }
+
         if (antiHarshness) s *= 0.98
+
         return s.coerceIn(-1.0, 1.0)
     }
 
@@ -997,7 +1011,11 @@ class BinauralAudioEngine(private val context: Context) {
             bufferCount++
 
             // Write to AudioTrack
-            audioTrack?.write(buffer, 0, buffer.size)
+            val written = audioTrack?.write(buffer, 0, buffer.size) ?: -1
+            if (written < 0) {
+                Log.e(TAG, "generateAudioLoop(): AudioTrack.write() returned error $written — stopping loop")
+                break
+            }
 
             // Log first buffer write to confirm loop is active
             if (!firstBufferWritten) {
