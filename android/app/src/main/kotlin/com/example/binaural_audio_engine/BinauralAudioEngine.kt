@@ -247,10 +247,6 @@ class BinauralAudioEngine(private val context: Context) {
 
     // ── Anti-fatigue / DC block ───────────────────────────────
     private var antiHarshness = true
-    private var prevInputL = 0.0
-    private var prevOutputL = 0.0
-    private var prevInputR = 0.0
-    private var prevOutputR = 0.0
 
     // ── Pad filter state (kept for emotional mode API) ────────
     private var padFilterBaseCutoff = 800.0
@@ -794,13 +790,9 @@ class BinauralAudioEngine(private val context: Context) {
     // ============================================================
 
     private fun applyAntiFatigueL(sample: Double): Double {
-        val R = 0.995
-        val output = sample - prevInputL + R * prevOutputL
-        prevInputL = sample
-        prevOutputL = output
+        var s = sample
 
-        var s = output
-
+        // Soft clipping only
         if (abs(s) > SOFT_CLIP_THRESHOLD) {
             val sign = if (s > 0) 1.0 else -1.0
             val excess = abs(s) - SOFT_CLIP_THRESHOLD
@@ -813,13 +805,9 @@ class BinauralAudioEngine(private val context: Context) {
     }
 
     private fun applyAntiFatigueR(sample: Double): Double {
-        val R = 0.995
-        val output = sample - prevInputR + R * prevOutputR
-        prevInputR = sample
-        prevOutputR = output
+        var s = sample
 
-        var s = output
-
+        // Soft clipping only
         if (abs(s) > SOFT_CLIP_THRESHOLD) {
             val sign = if (s > 0) 1.0 else -1.0
             val excess = abs(s) - SOFT_CLIP_THRESHOLD
@@ -935,74 +923,14 @@ class BinauralAudioEngine(private val context: Context) {
             // ── Per-sample loop ───────────────────────────────────
             for (i in 0 until bufferSize) {
 
-                // ── Voice 0: Binaural carrier (pure sine, independent) ──
-                val binauralLeft  = sin(binauralLeftPhase)  * binauralCarrierAmplitude
-                val binauralRight = sin(binauralRightPhase) * binauralCarrierAmplitude
-                binauralLeftPhase  += bufBinauralLeftInc
-                binauralRightPhase += bufBinauralRightInc
-                if (binauralLeftPhase  >= TWO_PI) binauralLeftPhase  -= TWO_PI
-                if (binauralRightPhase >= TWO_PI) binauralRightPhase -= TWO_PI
+                // ── RAW 440Hz TEST TONE (diagnostic) ──
+                val testFreq = 440.0
+                val sampleValue = sin(2.0 * Math.PI * testFreq * i / SAMPLE_RATE)
+                val leftSample = sampleValue * 0.4
+                val rightSample = sampleValue * 0.4
 
-                // ── Voices 1-3: Harmonic field voices ─────────────────
-                var hLeft  = 0.0
-                var hRight = 0.0
-                for (v in 0 until HARMONIC_VOICE_COUNT) {
-                    val s = harmonicVoices[v].generateSample()
-                    hLeft  += s * hLeftGains[v]
-                    hRight += s * hRightGains[v]
-                }
-
-                // ── Shimmer layer (replaces subharmonic) ──────────────
-                shimmerBreathingPhase += bufShimmerBreathInc
-                if (shimmerBreathingPhase >= TWO_PI) shimmerBreathingPhase -= TWO_PI
-                val shimmerEnv = shimmerAmplitude * (0.7 + 0.3 * sin(shimmerBreathingPhase))
-                val shimmerSample = sin(shimmerPhase) * shimmerEnv
-                shimmerPhase += bufShimmerInc
-                if (shimmerPhase >= TWO_PI) shimmerPhase -= TWO_PI
-                // Shimmer is center-panned
-                hLeft  += shimmerSample * 0.5
-                hRight += shimmerSample * 0.5
-
-                // ── Tonal pad voices ──────────────────────────────────
-                var pLeft  = 0.0
-                var pRight = 0.0
-                if (padLayerEnabled) {
-                    for (v in 0 until PAD_VOICE_COUNT) {
-                        val s = padVoices[v].generateSample()
-                        pLeft  += s * pLeftGains[v]
-                        pRight += s * pRightGains[v]
-                    }
-                }
-
-                // ── Mix all layers ────────────────────────────────────
-                var leftSample  = binauralLeft  + hLeft  + pLeft
-                var rightSample = binauralRight + hRight + pRight
-
-                // Apply gain envelope
-                leftSample  *= currentGain
-                rightSample *= currentGain
-
-                // Brown noise
-                if (brownNoiseEnabled) {
-                    val noise = generateEnhancedBrownNoise(sampleDelta)
-                    leftSample  += noise * brownNoiseLevel * currentGain
-                    rightSample += noise * brownNoiseLevel * currentGain
-                }
-
-                // Soft saturation (tape warmth)
-                if (saturationAmount > 0.0) {
-                    val drive = 1.0 + saturationAmount
-                    leftSample  = tanh(leftSample  * drive) / drive
-                    rightSample = tanh(rightSample * drive) / drive
-                }
-
-                // Anti-fatigue / DC block / soft clip
-                leftSample  = applyAntiFatigueL(leftSample)
-                rightSample = applyAntiFatigueR(rightSample)
-
-                // Convert to 16-bit PCM
-                buffer[i * 2]     = (leftSample  * 32767.0).coerceIn(-32768.0, 32767.0).toInt().toShort()
-                buffer[i * 2 + 1] = (rightSample * 32767.0).coerceIn(-32768.0, 32767.0).toInt().toShort()
+                buffer[i * 2]     = (leftSample  * 32767).toInt().toShort()
+                buffer[i * 2 + 1] = (rightSample * 32767).toInt().toShort()
             }
 
             // Measure processing time
