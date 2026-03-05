@@ -631,7 +631,6 @@ class BinauralAudioEngine(private val context: Context) {
                 shimmerAmplitude = 0.03
             }
         }
-        updateRootFrequency()
         updateAllVoiceFrequencies()
     }
 
@@ -923,14 +922,70 @@ class BinauralAudioEngine(private val context: Context) {
             // ── Per-sample loop ───────────────────────────────────
             for (i in 0 until bufferSize) {
 
-                // ── RAW 440Hz TEST TONE (diagnostic) ──
-                val testFreq = 440.0
-                val sampleValue = sin(2.0 * Math.PI * testFreq * i / SAMPLE_RATE)
-                val leftSample = sampleValue * 0.4
-                val rightSample = sampleValue * 0.4
+                // ── Binaural carrier (Voice 0) ────────────────────
+                val binauralLeft  = sin(binauralLeftPhase)  * binauralCarrierAmplitude
+                val binauralRight = sin(binauralRightPhase) * binauralCarrierAmplitude
+                binauralLeftPhase  += bufBinauralLeftInc
+                if (binauralLeftPhase  >= TWO_PI) binauralLeftPhase  -= TWO_PI
+                binauralRightPhase += bufBinauralRightInc
+                if (binauralRightPhase >= TWO_PI) binauralRightPhase -= TWO_PI
 
-                buffer[i * 2]     = (leftSample  * 32767).toInt().toShort()
-                buffer[i * 2 + 1] = (rightSample * 32767).toInt().toShort()
+                // ── Harmonic field voices (Voices 1-3) ────────────
+                var hMixL = 0.0
+                var hMixR = 0.0
+                val richnessMul = 0.5 + harmonicRichness * 0.5
+                for (v in 0 until HARMONIC_VOICE_COUNT) {
+                    val s = harmonicVoices[v].generateSample() * richnessMul
+                    hMixL += s * hLeftGains[v]
+                    hMixR += s * hRightGains[v]
+                }
+
+                // ── Harmonic shimmer layer ─────────────────────────
+                val shimmerBreath = shimmerAmplitude * (1.0 + sin(shimmerBreathingPhase) * 0.4)
+                val shimmerSample = sin(shimmerPhase) * shimmerBreath
+                shimmerPhase += bufShimmerInc
+                if (shimmerPhase >= TWO_PI) shimmerPhase -= TWO_PI
+                shimmerBreathingPhase += bufShimmerBreathInc
+                if (shimmerBreathingPhase >= TWO_PI) shimmerBreathingPhase -= TWO_PI
+
+                // ── Tonal chordal pad voices (Voices 5-7) ─────────
+                var pMixL = 0.0
+                var pMixR = 0.0
+                if (padLayerEnabled) {
+                    for (v in 0 until PAD_VOICE_COUNT) {
+                        val s = padVoices[v].generateSample()
+                        pMixL += s * pLeftGains[v]
+                        pMixR += s * pRightGains[v]
+                    }
+                }
+
+                // ── Brown noise layer ─────────────────────────────
+                val noiseSample = if (brownNoiseEnabled) {
+                    generateEnhancedBrownNoise(sampleDelta) * brownNoiseLevel * 0.15
+                } else 0.0
+
+                // ── Mix all layers ────────────────────────────────
+                var leftMix  = binauralLeft  + hMixL + shimmerSample + pMixL + noiseSample
+                var rightMix = binauralRight + hMixR + shimmerSample + pMixR + noiseSample
+
+                // ── Gain envelope ─────────────────────────────────
+                val engineGain = currentGain
+                leftMix  *= engineGain
+                rightMix *= engineGain
+
+                // ── Soft saturation ───────────────────────────────
+                if (saturationAmount > 0.0) {
+                    val sat = 0.5 + saturationAmount * 1.5
+                    leftMix  = tanh(leftMix  * sat) / sat
+                    rightMix = tanh(rightMix * sat) / sat
+                }
+
+                // ── Anti-fatigue (soft clip, no DC block) ─────────
+                leftMix  = applyAntiFatigueL(leftMix)
+                rightMix = applyAntiFatigueR(rightMix)
+
+                buffer[i * 2]     = (leftMix  * 32767).toInt().toShort()
+                buffer[i * 2 + 1] = (rightMix * 32767).toInt().toShort()
             }
 
             // Measure processing time

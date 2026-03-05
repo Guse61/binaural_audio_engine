@@ -167,6 +167,56 @@ class MainActivity: FlutterFragmentActivity() {
                     result.success(true)
                 }
                 
+                // ========== PHASE 3: Generative Harmonic Ambient Engine Controls ==========
+                
+                "setRootNote" -> {
+                    val noteFrequency = call.argument<Double>("noteFrequency") ?: 73.42
+                    audioEngine?.setRootNote(noteFrequency)
+                    result.success(true)
+                }
+                
+                "setTuningReference" -> {
+                    val use432 = call.argument<Boolean>("use432") ?: false
+                    audioEngine?.setTuningReference(use432)
+                    result.success(true)
+                }
+                
+                "setHarmonicDensity" -> {
+                    val density = call.argument<Double>("density") ?: 0.7
+                    audioEngine?.setHarmonicDensity(density)
+                    result.success(true)
+                }
+                
+                "setEvolutionSpeed" -> {
+                    val speed = call.argument<Double>("speed") ?: 0.5
+                    audioEngine?.setEvolutionSpeed(speed)
+                    result.success(true)
+                }
+                
+                "setStereoWidth" -> {
+                    val width = call.argument<Double>("width") ?: 0.5
+                    audioEngine?.setStereoWidth(width)
+                    result.success(true)
+                }
+                
+                "setSaturationAmount" -> {
+                    val amount = call.argument<Double>("amount") ?: 0.3
+                    audioEngine?.setSaturationAmount(amount)
+                    result.success(true)
+                }
+                
+                "setPadIntensity" -> {
+                    val intensity = call.argument<Double>("intensity") ?: 0.5
+                    audioEngine?.setPadIntensity(intensity)
+                    result.success(true)
+                }
+                
+                "setEmotionalMode" -> {
+                    val mode = call.argument<Int>("mode") ?: 1
+                    audioEngine?.setEmotionalMode(mode)
+                    result.success(true)
+                }
+                
                 else -> {
                     result.notImplemented()
                 }
