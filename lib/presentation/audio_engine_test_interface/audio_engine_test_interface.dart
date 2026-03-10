@@ -1,24 +1,26 @@
-import 'package:flutter/material.dart';
-import 'package:sizer/sizer.dart';
 import 'dart:async';
 
+import 'package:flutter/material.dart';
+import 'package:sizer/sizer.dart';
+
 import '../../core/app_export.dart';
-import '../../widgets/custom_icon_widget.dart';
 import '../../services/native_audio_service.dart';
+import '../../widgets/custom_icon_widget.dart';
 import './widgets/audio_focus_indicator_widget.dart';
 import './widgets/brown_noise_control_widget.dart';
+import './widgets/drift_intensity_control_widget.dart';
+import './widgets/emotional_mode_selector_widget.dart';
 import './widgets/frequency_control_widget.dart';
 import './widgets/gain_envelope_control_widget.dart';
-import './widgets/performance_indicators_widget.dart';
-import './widgets/ramp_control_widget.dart';
-import './widgets/waveform_visualization_widget.dart';
-import './widgets/harmonic_richness_control_widget.dart';
-import './widgets/drift_intensity_control_widget.dart';
-import './widgets/warmth_control_widget.dart';
-import './widgets/premium_features_control_widget.dart';
-import './widgets/tonal_system_control_widget.dart';
 import './widgets/generative_controls_widget.dart';
-import './widgets/emotional_mode_selector_widget.dart';
+import './widgets/harmonic_richness_control_widget.dart';
+import './widgets/nature_sound_control_widget.dart';
+import './widgets/performance_indicators_widget.dart';
+import './widgets/premium_features_control_widget.dart';
+import './widgets/ramp_control_widget.dart';
+import './widgets/tonal_system_control_widget.dart';
+import './widgets/warmth_control_widget.dart';
+import './widgets/waveform_visualization_widget.dart';
 
 /// Audio Engine Test Interface
 /// Professional-grade real-time binaural audio engine test harness
@@ -69,6 +71,10 @@ class _AudioEngineTestInterfaceState extends State<AudioEngineTestInterface> {
   double _saturationAmount = 30.0; // 0-100%
   double _padIntensity = 50.0; // 0-100%
   int _emotionalMode = 1; // 0=Sleep, 1=Calm, 2=Focus
+
+  // Add this block - Nature sound parameters
+  String _selectedNatureSound = 'none'; // default nature sound
+  double _natureSoundVolume = 50.0; // 0-100%
 
   @override
   void initState() {
@@ -437,6 +443,25 @@ class _AudioEngineTestInterfaceState extends State<AudioEngineTestInterface> {
     await _audioService.setEmotionalMode(mode);
   }
 
+  // Add this block - Nature sound control methods
+  /// Update nature sound
+  Future<void> _updateNatureSound(String sound) async {
+    setState(() {
+      _selectedNatureSound = sound;
+    });
+    // Add native audio service call if available
+    // await _audioService.setNatureSound(sound);
+  }
+
+  /// Update nature sound volume
+  Future<void> _updateNatureSoundVolume(double value) async {
+    setState(() {
+      _natureSoundVolume = value;
+    });
+    // Add native audio service call if available
+    // await _audioService.setNatureSoundVolume(value / 100.0);
+  }
+
   /// Update waveform visualization
   void _updateWaveform() {
     setState(() {
@@ -585,6 +610,15 @@ class _AudioEngineTestInterfaceState extends State<AudioEngineTestInterface> {
                         onStereoWidthChanged: _updateStereoWidth,
                         onSaturationAmountChanged: _updateSaturationAmount,
                         onPadIntensityChanged: _updatePadIntensity,
+                      ),
+                      SizedBox(height: 3.h),
+
+                      // Nature sound overlay
+                      NatureSoundControlWidget(
+                        selectedSound: _selectedNatureSound,
+                        volume: _natureSoundVolume,
+                        onSoundChanged: _updateNatureSound,
+                        onVolumeChanged: _updateNatureSoundVolume,
                       ),
                       SizedBox(height: 3.h),
 

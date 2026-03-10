@@ -30,12 +30,16 @@ class MainActivity: FlutterFragmentActivity() {
     
     private val CHANNEL = "com.example.binaural_audio_engine/audio"
     private var audioEngine: BinauralAudioEngine? = null
+    private lateinit var natureSoundManager: NatureSoundManager
     
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         
         // Initialize audio engine
         audioEngine = BinauralAudioEngine(applicationContext)
+        
+        // Initialize nature sound manager
+        natureSoundManager = NatureSoundManager(applicationContext)
         
         // Setup method channel
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
@@ -217,6 +221,37 @@ class MainActivity: FlutterFragmentActivity() {
                     result.success(true)
                 }
                 
+                // ========== Nature Sound Overlay Controls ==========
+                
+                "setNatureSound" -> {
+                    val soundName = call.argument<String>("sound") ?: "NONE"
+                    val sound = when (soundName) {
+                        "WIND_CHIMES" -> NatureSound.WIND_CHIMES
+                        "FOREST_BIRDSONG" -> NatureSound.FOREST_BIRDSONG
+                        "RIVER_STREAM" -> NatureSound.RIVER_STREAM
+                        "BEACH_WAVES" -> NatureSound.BEACH_WAVES
+                        "LIGHT_RAIN" -> NatureSound.LIGHT_RAIN
+                        else -> NatureSound.NONE
+                    }
+                    if (sound == NatureSound.NONE) {
+                        natureSoundManager.stop()
+                    } else {
+                        natureSoundManager.play(sound)
+                    }
+                    result.success(true)
+                }
+                
+                "setNatureVolume" -> {
+                    val volume = call.argument<Double>("volume") ?: 0.35
+                    natureSoundManager.setVolume(volume.toFloat())
+                    result.success(true)
+                }
+                
+                "stopNatureSound" -> {
+                    natureSoundManager.stop()
+                    result.success(true)
+                }
+                
                 else -> {
                     result.notImplemented()
                 }
@@ -225,6 +260,7 @@ class MainActivity: FlutterFragmentActivity() {
     }
     
     override fun onDestroy() {
+        natureSoundManager.stop()
         audioEngine?.release()
         audioEngine = null
         super.onDestroy()

@@ -345,4 +345,34 @@ class NativeAudioService {
       print('Error setting emotional mode: $e');
     }
   }
+
+  // ========== Nature Sound Overlay Controls ==========
+
+  /// Set nature sound overlay
+  /// @param sound Sound name: NONE, WIND_CHIMES, FOREST_BIRDSONG, RIVER_STREAM, BEACH_WAVES, LIGHT_RAIN
+  Future<void> setNatureSound(String sound) async {
+    try {
+      await _channel.invokeMethod('setNatureSound', {'sound': sound});
+    } catch (e) {
+      print('Error setting nature sound: $e');
+    }
+  }
+
+  /// Set nature sound volume (0.0-1.0)
+  Future<void> setNatureVolume(double volume) async {
+    try {
+      await _channel.invokeMethod('setNatureVolume', {'volume': volume});
+    } catch (e) {
+      print('Error setting nature volume: $e');
+    }
+  }
+
+  /// Stop nature sound overlay
+  Future<void> stopNatureSound() async {
+    try {
+      await _channel.invokeMethod('stopNatureSound');
+    } catch (e) {
+      print('Error stopping nature sound: $e');
+    }
+  }
 }

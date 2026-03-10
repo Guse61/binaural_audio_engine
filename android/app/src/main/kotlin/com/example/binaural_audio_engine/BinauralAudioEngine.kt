@@ -37,7 +37,7 @@ class HarmonicOscillatorVoice(
     // harmonicCoefficients[0]=A1, [1]=A2, [2]=A3, [3]=A5
     val harmonicCoefficients: DoubleArray = doubleArrayOf(0.6, 0.2, 0.12, 0.06)
     // Base coefficients for drift reference
-    private val baseCoefficients: DoubleArray = doubleArrayOf(0.6, 0.2, 0.12, 0.06)
+    private val baseCoefficients: DoubleArray = doubleArrayOf(0.7, 0.18, 0.08, 0.04)
     var lfoPhase: Double = Random.nextDouble() * 2.0 * PI
     var lfoRate: Double = lfoRateMin + Random.nextDouble() * (lfoRateMax - lfoRateMin)
 
@@ -146,7 +146,7 @@ class BinauralAudioEngine(private val context: Context) {
     // Pure sine, phase-continuous, independent from harmonic voices
     private var binauralLeftPhase = 0.0
     private var binauralRightPhase = 0.0
-    private val binauralCarrierAmplitude = 0.30  // fixed, not modulated
+    private val binauralCarrierAmplitude = 0.22  // fixed, not modulated
 
     // ── Brown noise ───────────────────────────────────────────
     private var brownNoiseEnabled = false
@@ -205,7 +205,7 @@ class BinauralAudioEngine(private val context: Context) {
     private var shimmerBreathingPhase = 0.0
     private var shimmerAmplitude = 0.04
     private var shimmerFreqMultiplier = 2.0  // 2x or 3x root
-    private var shimmerBreathingRate = 0.003 // Hz
+    private var shimmerBreathingRate = 0.0015 // Hz
 
     // ── Tonal chordal pad voices (Voices 5-7) ─────────────────
     // Warm ambient synth pad using harmonic oscillator voices
@@ -223,6 +223,12 @@ class BinauralAudioEngine(private val context: Context) {
     private val padDetuneMultipliers = DoubleArray(PAD_VOICE_COUNT) { 1.0 }
     private var padLayerEnabled = false
     private var padLayerLevel = 0.12
+
+    // ── Pad voice low-pass filter state ───────────────────────
+    private val padLPFState = DoubleArray(PAD_VOICE_COUNT)
+
+    // ── Ultra-slow stereo drift ───────────────────────────────
+    private var stereoDriftPhase = 0.0
 
     // ── Chord progression (I → IV → vi → I) ──────────────────
     private var currentChordType = ChordType.ROOT
@@ -247,6 +253,11 @@ class BinauralAudioEngine(private val context: Context) {
 
     // ── Anti-fatigue / DC block ───────────────────────────────
     private var antiHarshness = true
+
+    // ── Master low-pass filter (spectral smoothing) ───────────
+    private var masterLPF_L = 0.0
+    private var masterLPF_R = 0.0
+    private val masterLPFCoeff = 0.08
 
     // ── Pad filter state (kept for emotional mode API) ────────
     private var padFilterBaseCutoff = 800.0
@@ -667,13 +678,30 @@ class BinauralAudioEngine(private val context: Context) {
         // (shimmerPhase is continuous; frequency updated per-buffer)
         // Pad voices: same chord ratios
         for (i in 0 until PAD_VOICE_COUNT) {
-            padVoices[i].baseFrequency = rootNote * chordRatios[i % chordRatios.size]
+            val idx = i % chordRatios.size
+            padVoices[i].baseFrequency = rootNote * chordRatios[idx]
         }
     }
 
     private fun interpolateRatio(from: Double, to: Double, progress: Double): Double {
         val p = sqrt(progress.coerceIn(0.0, 1.0))
         return from * (1.0 - p) + to * p
+    }
+
+    private fun findClosestRatio(currentFreq: Double, targetRatios: DoubleArray): Double {
+        var bestRatio = targetRatios[0]
+        var smallestDiff = Double.MAX_VALUE
+
+        for (ratio in targetRatios) {
+            val targetFreq = rootNote * ratio
+            val diff = Math.abs(targetFreq - currentFreq)
+            if (diff < smallestDiff) {
+                smallestDiff = diff
+                bestRatio = ratio
+            }
+        }
+
+        return bestRatio
     }
 
     // ============================================================
@@ -690,6 +718,9 @@ class BinauralAudioEngine(private val context: Context) {
             timeSinceLastChordChange = 0.0
             nextChordChangeTime = CHORD_CHANGE_MIN +
                 (CHORD_CHANGE_MAX - CHORD_CHANGE_MIN) * Random.nextDouble()
+            if (Random.nextDouble() < 0.15) {
+                shimmerFreqMultiplier = if (Random.nextBoolean()) 2.0 else 3.0
+            }
         }
 
         if (isTransitioningChord) {
@@ -701,16 +732,26 @@ class BinauralAudioEngine(private val context: Context) {
                 updateAllVoiceFrequencies()
             } else {
                 // Interpolate voice frequencies during crossfade
-                val fromRatios = getChordRatios(currentChordType)
-                val toRatios = getChordRatios(targetChordType)
+                val targetRatios = getChordRatios(targetChordType)
+
                 for (i in 0 until HARMONIC_VOICE_COUNT) {
-                    harmonicVoices[i].baseFrequency = rootNote *
-                        interpolateRatio(fromRatios[i], toRatios[i], chordTransitionProgress)
+                    val currentFreq = harmonicVoices[i].baseFrequency
+                    val closestRatio = findClosestRatio(currentFreq, targetRatios)
+                    val currentRatio = currentFreq / rootNote
+                    val interpolatedRatio =
+                        interpolateRatio(currentRatio, closestRatio, chordTransitionProgress)
+                    harmonicVoices[i].baseFrequency = rootNote * interpolatedRatio
                 }
+
+                val targetRatiosPad = getChordRatios(targetChordType)
+
                 for (i in 0 until PAD_VOICE_COUNT) {
-                    val idx = i % fromRatios.size
-                    padVoices[i].baseFrequency = rootNote *
-                        interpolateRatio(fromRatios[idx], toRatios[idx], chordTransitionProgress)
+                    val currentFreq = padVoices[i].baseFrequency
+                    val closestRatio = findClosestRatio(currentFreq, targetRatiosPad)
+                    val currentRatio = currentFreq / rootNote
+                    val interpolatedRatio =
+                        interpolateRatio(currentRatio, closestRatio, chordTransitionProgress)
+                    padVoices[i].baseFrequency = rootNote * interpolatedRatio
                 }
             }
         }
@@ -889,9 +930,15 @@ class BinauralAudioEngine(private val context: Context) {
             bufBinauralRightInc = TWO_PI * (baseFrequency + beatFrequency) / SAMPLE_RATE
 
             // Precompute shimmer increments
-            val shimmerFreq = rootNote * shimmerFreqMultiplier
+            val shimmerDrift = 0.1 * sin(shimmerBreathingPhase * 0.3)
+            val shimmerFreq = rootNote * (2.0 + shimmerDrift)
             bufShimmerInc      = TWO_PI * shimmerFreq / SAMPLE_RATE
             bufShimmerBreathInc = TWO_PI * shimmerBreathingRate / SAMPLE_RATE
+
+            // Compute ultra-slow stereo drift
+            val stereoDrift = sin(stereoDriftPhase) * 0.05
+            stereoDriftPhase += TWO_PI * 0.01 * deltaTime
+            if (stereoDriftPhase > TWO_PI) stereoDriftPhase -= TWO_PI
 
             // Precompute harmonic voice buffers (drift coefficients once per buffer)
             for (i in 0 until HARMONIC_VOICE_COUNT) {
@@ -907,7 +954,7 @@ class BinauralAudioEngine(private val context: Context) {
             val hLeftGains  = DoubleArray(HARMONIC_VOICE_COUNT)
             val hRightGains = DoubleArray(HARMONIC_VOICE_COUNT)
             for (i in 0 until HARMONIC_VOICE_COUNT) {
-                val pan = harmonicVoicePan[i] * stereoWidth
+                val pan = (harmonicVoicePan[i] + stereoDrift) * stereoWidth
                 hLeftGains[i]  = sqrt((1.0 - pan) * 0.5)
                 hRightGains[i] = sqrt((1.0 + pan) * 0.5)
             }
@@ -941,7 +988,7 @@ class BinauralAudioEngine(private val context: Context) {
                 }
 
                 // ── Harmonic shimmer layer ─────────────────────────
-                val shimmerBreath = shimmerAmplitude * (1.0 + sin(shimmerBreathingPhase) * 0.4)
+                val shimmerBreath = shimmerAmplitude * (1.0 + sin(shimmerBreathingPhase) * 0.15)
                 val shimmerSample = sin(shimmerPhase) * shimmerBreath
                 shimmerPhase += bufShimmerInc
                 if (shimmerPhase >= TWO_PI) shimmerPhase -= TWO_PI
@@ -953,7 +1000,9 @@ class BinauralAudioEngine(private val context: Context) {
                 var pMixR = 0.0
                 if (padLayerEnabled) {
                     for (v in 0 until PAD_VOICE_COUNT) {
-                        val s = padVoices[v].generateSample()
+                        val raw = padVoices[v].generateSample()
+                        padLPFState[v] = padLPFState[v] * 0.995 + raw * 0.005
+                        val s = padLPFState[v]
                         pMixL += s * pLeftGains[v]
                         pMixR += s * pRightGains[v]
                     }
@@ -972,6 +1021,13 @@ class BinauralAudioEngine(private val context: Context) {
                 val engineGain = currentGain
                 leftMix  *= engineGain
                 rightMix *= engineGain
+
+                // Gentle master low-pass smoothing
+                masterLPF_L += masterLPFCoeff * (leftMix - masterLPF_L)
+                masterLPF_R += masterLPFCoeff * (rightMix - masterLPF_R)
+
+                leftMix = masterLPF_L
+                rightMix = masterLPF_R
 
                 // ── Soft saturation ───────────────────────────────
                 if (saturationAmount > 0.0) {
